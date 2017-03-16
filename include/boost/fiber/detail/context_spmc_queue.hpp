@@ -71,21 +71,21 @@ private:
             return size_;
         }
 
-        void push( std::size_t bottom, context * ctx) noexcept {
+        void push( std::size_t idx, context * ctx) noexcept {
             reinterpret_cast< atomic_type * >(
-                std::addressof( storage_[bottom % size_]) )
+                std::addressof( storage_[idx % size_]) )
                     ->store( ctx, std::memory_order_relaxed);
         }
 
-        context * pop( std::size_t top) noexcept {
+        context * pop( std::size_t idx) noexcept {
             return reinterpret_cast< atomic_type * >(
-                std::addressof( storage_[top % size_]) )
+                std::addressof( storage_[idx % size_]) )
                     ->load( std::memory_order_relaxed);
         }
 
         array * resize( std::size_t bottom, std::size_t top) {
             std::unique_ptr< array > tmp{ new array{ 2 * size_ } };
-            for ( std::size_t i = top; i != bottom; ++i) {
+            for ( std::size_t i = top; i < bottom; ++i) {
                 tmp->push( i, pop( i) );
             }
             return tmp.release();
@@ -121,6 +121,8 @@ public:
     }
 
     void push( context * ctx) {
+        BOOST_ASSERT( nullptr != ctx);
+        BOOST_ASSERT( ! ctx->is_context( type::pinned_context) );
         std::size_t bottom = bottom_.load( std::memory_order_relaxed);
         std::size_t top = top_.load( std::memory_order_acquire);
         array * a = array_.load( std::memory_order_relaxed);
@@ -138,21 +140,47 @@ public:
     }
 
     context * pop() {
+        std::size_t bottom = bottom_.load( std::memory_order_relaxed) - 1;
+        array * a = array_.load( std::memory_order_relaxed);
+        bottom_.store( bottom, std::memory_order_relaxed);
+        std::atomic_thread_fence( std::memory_order_seq_cst);
+        std::size_t top = top_.load( std::memory_order_relaxed);
+        context * ctx = nullptr;
+        if ( top <= bottom) {
+            // queue is not empty
+            ctx = a->pop( bottom);
+            if ( top == bottom) {
+                // last element dequeued
+                if ( ! top_.compare_exchange_strong( top, top + 1,
+                                                     std::memory_order_seq_cst,
+                                                     std::memory_order_relaxed) ) {
+                    // lose the race
+                    ctx = nullptr;
+                }
+                bottom_.store( bottom + 1, std::memory_order_relaxed);
+            }
+        } else {
+            // queue is empty
+            bottom_.store( bottom + 1, std::memory_order_relaxed);
+        }
+        return ctx;
+    }
+
+    context * steal() {
         std::size_t top = top_.load( std::memory_order_acquire);
         std::atomic_thread_fence( std::memory_order_seq_cst);
         std::size_t bottom = bottom_.load( std::memory_order_acquire);
         context * ctx = nullptr;
         if ( top < bottom) {
             // queue is not empty
+            ctx = array_.load( std::memory_order_consume)->pop( top);
             if ( ! top_.compare_exchange_strong( top, top + 1,
                                                  std::memory_order_seq_cst,
                                                  std::memory_order_relaxed) ) {
                 // lose the race
                 return nullptr;
             }
-            array * a = array_.load( std::memory_order_consume);
-            ctx = a->pop( top);
-            BOOST_ASSERT( ! ctx->is_context( type::pinned_context) );
+            BOOST_ASSERT( nullptr != ctx);
         }
         return ctx;
     }
