@@ -11,10 +11,12 @@
 #include <condition_variable>
 #include <chrono>
 #include <cstddef>
+#include <cstring>
 #include <mutex>
 #include <vector>
 
 #include <boost/config.hpp>
+#include <boost/context/stack_traits.hpp>
 
 #include <boost/fiber/algo/algorithm.hpp>
 #include <boost/fiber/detail/context_spmc_queue.hpp>
@@ -32,14 +34,83 @@ namespace algo {
 
 class work_stealing : public algorithm {
 private:
-    typedef scheduler::ready_queue_type lqueue_type;
+	class circular_buffer {
+	private:
+		typedef context *   slot_type;
 
-    static std::vector< work_stealing * >        schedulers_;
+		std::size_t     pidx_{ 0 };
+		std::size_t     cidx_{ 0 };
+		std::size_t     capacity_;
+		slot_type   *   slots_;
+
+		void resize_() {
+			slot_type * old_slots = slots_;
+			slots_ = new slot_type[2*capacity_];
+			std::size_t offset = capacity_ - cidx_;
+			std::memcpy( slots_, old_slots + cidx_, offset * sizeof( slot_type) );
+			if ( 0 < cidx_) {
+				std::memcpy( slots_ + offset, old_slots, pidx_ * sizeof( slot_type) );
+			}
+			cidx_ = 0;
+			pidx_ = capacity_ - 1;
+			capacity_ *= 2;
+			delete [] old_slots;
+		}
+
+		bool is_full_() const noexcept {
+			return cidx_ == ((pidx_ + 1) % capacity_);
+		}
+
+	public:
+		circular_buffer( std::size_t capacity = 4*1024) :
+				capacity_{ capacity } {
+			slots_ = new slot_type[capacity_];
+		}
+
+		~circular_buffer() {
+			delete [] slots_;
+		}
+
+		bool empty() const noexcept {
+			return cidx_ == pidx_;
+		}
+
+		void push( context * c) {
+			if ( is_full_() ) {
+				resize_();
+			}
+			slots_[pidx_] = c;
+			pidx_ = (pidx_ + 1) % capacity_;
+		}
+
+		context * pop() {
+			context * c = nullptr;
+			if ( ! empty() ) {
+				c = slots_[cidx_];
+				cidx_ = (cidx_ + 1) % capacity_;
+			}
+			return c;
+		}
+
+		context * steal() {
+			context * c = nullptr;
+			if ( ! empty() ) {
+				c = slots_[cidx_];
+				if ( c->is_context( type::pinned_context) ) {
+					return nullptr;
+				}
+				cidx_ = (cidx_ + 1) % capacity_;
+			}
+			return c;
+		}
+	};
+
+    static std::vector< work_stealing * >           schedulers_;
 
     std::size_t                                     idx_;
     std::size_t                                     max_idx_;
-    detail::context_spmc_queue                      rqueue_{};
-    lqueue_type                                     lqueue_{};
+	mutable detail::spinlock						splk_;
+    circular_buffer                      			rqueue_{ 16 * boost::context::stack_traits::page_size() };
     std::mutex                                      mtx_{};
     std::condition_variable                         cnd_{};
     bool                                            flag_{ false };
@@ -61,11 +132,13 @@ public:
     context * pick_next() noexcept;
 
     context * steal() noexcept {
-        return rqueue_.pop();
+		detail::spinlock_lock lk{ splk_ };	
+        return rqueue_.steal();
     }
 
     bool has_ready_fibers() const noexcept {
-        return ! rqueue_.empty() || ! lqueue_.empty();
+		detail::spinlock_lock lk{ splk_ };	
+        return ! rqueue_.empty();
     }
 
     void suspend_until( std::chrono::steady_clock::time_point const& time_point) noexcept;
