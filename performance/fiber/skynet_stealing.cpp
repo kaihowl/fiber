@@ -80,7 +80,7 @@ int main() {
         unsigned int max_idx = cpus - 1;
         boost::fibers::use_scheduling_algorithm< boost::fibers::algo::work_stealing >( max_idx, max_idx);
         bind_to_processor( max_idx);
-        std::size_t size{ 100000 };
+        std::size_t size{ 1000000 };
         std::size_t div{ 10 };
         std::vector< std::thread > threads;
         for ( unsigned int idx = 0; idx < max_idx; ++idx) {

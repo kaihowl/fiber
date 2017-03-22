@@ -53,7 +53,7 @@ void skynet( allocator_type & salloc, channel_type & c, std::size_t num, std::si
 
 int main() {
     try {
-        std::size_t size{ 100000 };
+        std::size_t size{ 1000000 };
         std::size_t div{ 10 };
         allocator_type salloc{ allocator_type::traits_type::page_size() };
         std::uint64_t result{ 0 };
