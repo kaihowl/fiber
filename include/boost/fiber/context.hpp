@@ -113,14 +113,6 @@ typedef intrusive::set_member_hook<
     >
 >                                       sleep_hook;
 
-struct terminated_tag;
-typedef intrusive::list_member_hook<
-    intrusive::tag< terminated_tag >,
-    intrusive::link_mode<
-        intrusive::auto_unlink
-    >
->                                       terminated_hook;
-
 struct worker_tag;
 typedef intrusive::list_member_hook<
     intrusive::tag< worker_tag >,
@@ -190,7 +182,6 @@ private:
     fss_data_t                                          fss_data_{};
     detail::sleep_hook                                  sleep_hook_{};
     detail::ready_hook                                  ready_hook_{};
-    detail::terminated_hook                             terminated_hook_{};
     detail::worker_hook                                 worker_hook_{};
 #if (BOOST_EXECUTION_CONTEXT==1)
     boost::context::execution_context                   ctx_;
@@ -450,8 +441,6 @@ public:
 
     bool sleep_is_linked() const noexcept;
 
-    bool terminated_is_linked() const noexcept;
-
     bool wait_is_linked() const noexcept;
 
     template< typename List >
@@ -483,13 +472,6 @@ public:
     }
 
     template< typename List >
-    void terminated_link( List & lst) noexcept {
-        static_assert( std::is_same< typename List::value_traits::hook_type, detail::terminated_hook >::value, "not a terminated-queue");
-        BOOST_ASSERT( ! terminated_is_linked() );
-        lst.push_back( * this);
-    }
-
-    template< typename List >
     void wait_link( List & lst) noexcept {
         static_assert( std::is_same< typename List::value_traits::hook_type, detail::wait_hook >::value, "not a wait-queue");
         BOOST_ASSERT( ! wait_is_linked() );
@@ -503,8 +485,6 @@ public:
     void remote_ready_unlink() noexcept;
 
     void sleep_unlink() noexcept;
-
-    void terminated_unlink() noexcept;
 
     void wait_unlink() noexcept;
 

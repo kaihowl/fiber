@@ -25,6 +25,7 @@
 #include <boost/fiber/algo/algorithm.hpp>
 #include <boost/fiber/context.hpp>
 #include <boost/fiber/detail/config.hpp>
+#include <boost/fiber/detail/context_queue.hpp>
 #include <boost/fiber/detail/data.hpp>
 #include <boost/fiber/detail/spinlock.hpp>
 
@@ -63,11 +64,6 @@ private:
     typedef intrusive::list<
                 context,
                 intrusive::member_hook<
-                    context, detail::terminated_hook, & context::terminated_hook_ >,
-                intrusive::constant_time_size< false > >    terminated_queue_type;
-    typedef intrusive::list<
-                context,
-                intrusive::member_hook<
                     context, detail::worker_hook, & context::worker_hook_ >,
                 intrusive::constant_time_size< false > >    worker_queue_type;
     typedef intrusive::list<
@@ -75,6 +71,7 @@ private:
                 intrusive::member_hook<
                     context, detail::remote_ready_hook, & context::remote_ready_hook_ >,
                 intrusive::constant_time_size< false > >    remote_ready_queue_type;
+    typedef detail::context_queue                           terminated_queue_type;
 
 #if ! defined(BOOST_FIBERS_NO_ATOMICS)
     // remote ready-queue contains context' signaled by schedulers
