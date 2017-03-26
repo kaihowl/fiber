@@ -170,17 +170,15 @@ public:
         // notify all waiting producers
         // FIXME: swap queue
         detail::spinlock_lock lk1{ splk_producers_ };
-        while ( ! waiting_producers_.empty() ) {
-            context * producer_ctx = & waiting_producers_.front();
-            waiting_producers_.pop_front();
+        context * producer_ctx;
+        while ( nullptr != ( producer_ctx = waiting_producers_.pop() ) ) {
             active_ctx->schedule( producer_ctx);
         }
         // notify all waiting consumers
         // FIXME: swap queue, then unlock lock
         detail::spinlock_lock lk2{ splk_consumers_ };
-        while ( ! waiting_consumers_.empty() ) {
-            context * consumer_ctx = & waiting_consumers_.front();
-            waiting_consumers_.pop_front();
+        context * consumer_ctx;
+        while ( nullptr != ( consumer_ctx = waiting_consumers_.pop() ) ) {
             active_ctx->schedule( consumer_ctx);
         }
     }
@@ -194,9 +192,8 @@ public:
         if ( channel_op_status::success == status) {
             detail::spinlock_lock lk{ splk_consumers_ };
             // notify one waiting consumer
-            if ( ! waiting_consumers_.empty() ) {
-                context * consumer_ctx = & waiting_consumers_.front();
-                waiting_consumers_.pop_front();
+            context * consumer_ctx = waiting_consumers_.pop();
+            if ( nullptr != consumer_ctx) {
                 lk.unlock();
                 active_ctx->schedule( consumer_ctx);
             }
@@ -217,9 +214,8 @@ public:
         if ( channel_op_status::success == status) {
             detail::spinlock_lock lk{ splk_consumers_ };
             // notify one waiting consumer
-            if ( ! waiting_consumers_.empty() ) {
-                context * consumer_ctx = & waiting_consumers_.front();
-                waiting_consumers_.pop_front();
+            context * consumer_ctx = waiting_consumers_.pop();
+            if ( nullptr != consumer_ctx) {
                 lk.unlock();
                 context::active()->schedule( consumer_ctx);
             }
@@ -242,9 +238,8 @@ public:
             if ( channel_op_status::success == status) {
                 detail::spinlock_lock lk{ splk_consumers_ };
                 // notify one waiting consumer
-                if ( ! waiting_consumers_.empty() ) {
-                    context * consumer_ctx = & waiting_consumers_.front();
-                    waiting_consumers_.pop_front();
+                context * consumer_ctx = waiting_consumers_.pop();
+                if ( nullptr != consumer_ctx) {
                     lk.unlock();
                     active_ctx->schedule( consumer_ctx);
                 }
@@ -257,7 +252,7 @@ public:
                 if ( ! is_full_() ) {
                     continue;
                 }
-                active_ctx->wait_link( waiting_producers_);
+                waiting_producers_.push( active_ctx);
                 // suspend this producer
                 active_ctx->suspend( lk);
             } else {
@@ -277,9 +272,8 @@ public:
             if ( channel_op_status::success == status) {
                 detail::spinlock_lock lk{ splk_consumers_ };
                 // notify one waiting consumer
-                if ( ! waiting_consumers_.empty() ) {
-                    context * consumer_ctx = & waiting_consumers_.front();
-                    waiting_consumers_.pop_front();
+                context * consumer_ctx = waiting_consumers_.pop();
+                if ( nullptr != consumer_ctx) {
                     lk.unlock();
                     active_ctx->schedule( consumer_ctx);
                 }
@@ -292,7 +286,7 @@ public:
                 if ( ! is_full_() ) {
                     continue;
                 }
-                active_ctx->wait_link( waiting_producers_);
+                waiting_producers_.push( active_ctx);
                 // suspend this producer
                 active_ctx->suspend( lk);
             } else {
@@ -329,9 +323,8 @@ public:
             if ( channel_op_status::success == status) {
                 detail::spinlock_lock lk{ splk_consumers_ };
                 // notify one waiting consumer
-                if ( ! waiting_consumers_.empty() ) {
-                    context * consumer_ctx = & waiting_consumers_.front();
-                    waiting_consumers_.pop_front();
+                context * consumer_ctx = waiting_consumers_.pop();
+                if ( nullptr != consumer_ctx) {
                     lk.unlock();
                     active_ctx->schedule( consumer_ctx);
                 }
@@ -344,13 +337,13 @@ public:
                 if ( ! is_full_() ) {
                     continue;
                 }
-                active_ctx->wait_link( waiting_producers_);
+                waiting_producers_.push( active_ctx);
                 // suspend this producer
                 if ( ! active_ctx->wait_until( timeout_time, lk) ) {
                     // relock local lk
                     lk.lock();
                     // remove from waiting-queue
-                    active_ctx->wait_unlink();
+                    waiting_producers_.remove( active_ctx);
                     return channel_op_status::timeout;
                 }
             } else {
@@ -373,9 +366,8 @@ public:
             if ( channel_op_status::success == status) {
                 detail::spinlock_lock lk{ splk_consumers_ };
                 // notify one waiting consumer
-                if ( ! waiting_consumers_.empty() ) {
-                    context * consumer_ctx = & waiting_consumers_.front();
-                    waiting_consumers_.pop_front();
+                context * consumer_ctx = waiting_consumers_.pop();
+                if ( nullptr != consumer_ctx) {
                     lk.unlock();
                     active_ctx->schedule( consumer_ctx);
                 }
@@ -388,13 +380,13 @@ public:
                 if ( ! is_full_() ) {
                     continue;
                 }
-                active_ctx->wait_link( waiting_producers_);
+                waiting_producers_.push( active_ctx);
                 // suspend this producer
                 if ( ! active_ctx->wait_until( timeout_time, lk) ) {
                     // relock local lk
                     lk.lock();
                     // remove from waiting-queue
-                    active_ctx->wait_unlink();
+                    waiting_producers_.remove( active_ctx);
                     return channel_op_status::timeout;
                 }
             } else {
@@ -409,9 +401,8 @@ public:
         if ( channel_op_status::success == status) {
             detail::spinlock_lock lk{ splk_producers_ };
             // notify one waiting producer
-            if ( ! waiting_producers_.empty() ) {
-                context * producer_ctx = & waiting_producers_.front();
-                waiting_producers_.pop_front();
+            context * producer_ctx = waiting_producers_.pop();
+            if ( nullptr != producer_ctx) {
                 lk.unlock();
                 context::active()->schedule( producer_ctx);
             }
@@ -435,9 +426,8 @@ public:
             if ( channel_op_status::success == status) {
                 detail::spinlock_lock lk{ splk_producers_ };
                 // notify one waiting producer
-                if ( ! waiting_producers_.empty() ) {
-                    context * producer_ctx = & waiting_producers_.front();
-                    waiting_producers_.pop_front();
+                context * producer_ctx = waiting_producers_.pop();
+                if ( nullptr != producer_ctx) {
                     lk.unlock();
                     active_ctx->schedule( producer_ctx);
                 }
@@ -450,7 +440,7 @@ public:
                 if ( ! is_empty_() ) {
                     continue;
                 }
-                active_ctx->wait_link( waiting_consumers_);
+                waiting_consumers_.push( active_ctx);
                 // suspend this consumer
                 active_ctx->suspend( lk);
             } else {
@@ -471,9 +461,8 @@ public:
                 s->cycle.store( idx + capacity_, std::memory_order_release);
                 detail::spinlock_lock lk{ splk_producers_ };
                 // notify one waiting producer
-                if ( ! waiting_producers_.empty() ) {
-                    context * producer_ctx = & waiting_producers_.front();
-                    waiting_producers_.pop_front();
+                context * producer_ctx = waiting_producers_.pop();
+                if ( nullptr != producer_ctx) {
                     lk.unlock();
                     active_ctx->schedule( producer_ctx);
                 }
@@ -488,7 +477,7 @@ public:
                 if ( ! is_empty_() ) {
                     continue;
                 }
-                active_ctx->wait_link( waiting_consumers_);
+                waiting_consumers_.push( active_ctx);
                 // suspend this consumer
                 active_ctx->suspend( lk);
             } else {
@@ -517,9 +506,8 @@ public:
             if ( channel_op_status::success == status) {
                 detail::spinlock_lock lk{ splk_producers_ };
                 // notify one waiting producer
-                if ( ! waiting_producers_.empty() ) {
-                    context * producer_ctx = & waiting_producers_.front();
-                    waiting_producers_.pop_front();
+                context * producer_ctx = waiting_producers_.pop();
+                if ( nullptr != producer_ctx) {
                     lk.unlock();
                     active_ctx->schedule( producer_ctx);
                 }
@@ -532,13 +520,13 @@ public:
                 if ( ! is_empty_() ) {
                     continue;
                 }
-                active_ctx->wait_link( waiting_consumers_);
+                waiting_consumers_.push( active_ctx);
                 // suspend this consumer
                 if ( ! active_ctx->wait_until( timeout_time, lk) ) {
                     // relock local lk
                     lk.lock();
                     // remove from waiting-queue
-                    active_ctx->wait_unlink();
+                    waiting_consumers_.remove( active_ctx);
                     return channel_op_status::timeout;
                 }
             } else {

@@ -14,7 +14,6 @@
 
 #include <boost/config.hpp>
 
-#include <boost/fiber/context.hpp>
 #include <boost/fiber/detail/config.hpp>
 #include <boost/fiber/detail/spinlock.hpp>
 
@@ -24,72 +23,93 @@
 
 namespace boost {
 namespace fibers {
+
+class context;
+
 namespace detail {
 
 class context_queue {
 private:
-	typedef context *   slot_type;
+    typedef context *   slot_type;
 
-	std::size_t                                 pidx_{ 0 };
-	std::size_t                                 cidx_{ 0 };
-	std::size_t                                 capacity_;
-	slot_type                               *   slots_;
+    std::size_t                                 pidx_{ 0 };
+    std::size_t                                 cidx_{ 0 };
+    std::size_t                                 capacity_;
+    slot_type                               *   slots_;
 
-	void resize_() {
-		slot_type * old_slots = slots_;
-		slots_ = new slot_type[2*capacity_];
-		std::size_t offset = capacity_ - cidx_;
-		std::memcpy( slots_, old_slots + cidx_, offset * sizeof( slot_type) );
-		if ( 0 < cidx_) {
-			std::memcpy( slots_ + offset, old_slots, pidx_ * sizeof( slot_type) );
-		}
-		cidx_ = 0;
-		pidx_ = capacity_ - 1;
-		capacity_ *= 2;
-		delete [] old_slots;
-	}
+    void resize_() {
+        slot_type * old_slots = slots_;
+        slots_ = new slot_type[2*capacity_];
+        std::size_t cidx = cidx_ % capacity_;
+        std::size_t offset = capacity_ - cidx;
+        std::memcpy( slots_, old_slots + cidx, offset * sizeof( slot_type) );
+        if ( 0 < cidx) {
+            std::size_t pidx = pidx_ % capacity_;
+            std::memcpy( slots_ + offset, old_slots, pidx * sizeof( slot_type) );
+        }
+        cidx_ = 0;
+        pidx_ = capacity_ - 1;
+        capacity_ *= 2;
+        delete [] old_slots;
+    }
 
-	bool is_full_() const noexcept {
-		return cidx_ == ((pidx_ + 1) % capacity_);
-	}
+    bool is_full_() const noexcept {
+        return cidx_ % capacity_ == ((pidx_ + 1) % capacity_);
+    }
 
-	bool is_empty_() const noexcept {
-		return cidx_ == pidx_;
-	}
+    bool is_empty_() const noexcept {
+        return cidx_ == pidx_;
+    }
 
 public:
-	context_queue( std::size_t capacity = 4096) :
-			capacity_{ capacity } {
-		slots_ = new slot_type[capacity_];
-	}
+    context_queue( std::size_t capacity = 4096) :
+            capacity_{ capacity } {
+        slots_ = new slot_type[capacity_];
+    }
 
-	~context_queue() {
-		delete [] slots_;
-	}
+    ~context_queue() {
+        delete [] slots_;
+    }
 
     context_queue( context_queue const&) = delete;
     context_queue & operator=( context_queue const&) = delete;
 
-	bool empty() const noexcept {
-		return is_empty_();
-	}
+    bool empty() const noexcept {
+        return is_empty_();
+    }
 
-	void push( context * c) {
-		if ( is_full_() ) {
-			resize_();
-		}
-		slots_[pidx_] = c;
-		pidx_ = (pidx_ + 1) % capacity_;
-	}
+    void push( context * c) {
+        if ( is_full_() ) {
+            resize_();
+        }
+        slots_[pidx_ % capacity_] = c;
+        ++pidx_;
+    }
 
-	context * pop() {
-		context * c = nullptr;
-		if ( ! is_empty_() ) {
-			c = slots_[cidx_];
-			cidx_ = (cidx_ + 1) % capacity_;
-		}
-		return c;
-	}
+    context * pop() {
+        context * c = nullptr;
+        if ( ! is_empty_() ) {
+            c = slots_[cidx_ % capacity_];
+            ++cidx_;
+        }
+        return c;
+    }
+
+    void remove( context * ctx) {
+        if ( ! is_empty_() ) {
+            for ( std::size_t i = cidx_; i < pidx_; ++i) { 
+                if ( ctx == slots_[i % capacity_]) {
+                    if ( pidx_ > i + 1) {
+                        std::size_t pidx = pidx_ % capacity_;
+                        std::size_t offset = pidx - i - 1;
+                        std::memcpy( slots_ + i, slots_ + i + 1, offset * sizeof( slot_type) );
+                    }
+                    --pidx_;
+                    break;
+                }
+            }
+        }
+    }
 };
 
 }}}
